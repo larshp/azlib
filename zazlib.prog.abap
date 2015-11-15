@@ -32,7 +32,7 @@ CLASS lcl_zlib DEFINITION FINAL.
         RETURNING VALUE(rv_compressed) TYPE xstring,
       decompress
         IMPORTING iv_compressed TYPE xsequence
-                  iv_expected   TYPE i
+                  iv_expected   TYPE i OPTIONAL
         RETURNING VALUE(rv_raw) TYPE xstring.
 
 ENDCLASS.
@@ -40,10 +40,18 @@ ENDCLASS.
 CLASS lcl_zlib IMPLEMENTATION.
 
   METHOD compress.
+
+    ASSERT NOT iv_raw IS INITIAL.
+
 * todo
   ENDMETHOD.
 
   METHOD decompress.
+
+    IF iv_compressed IS INITIAL.
+      RETURN.
+    ENDIF.
+
 * todo
   ENDMETHOD.
 
@@ -53,14 +61,45 @@ CLASS ltcl_zlib DEFINITION FOR TESTING RISK LEVEL HARMLESS DURATION SHORT FINAL.
 
   PRIVATE SECTION.
     METHODS:
-      test01 FOR TESTING.
+      identity FOR TESTING,
+      decompress FOR TESTING RAISING cx_dynamic_check.
 
 ENDCLASS.
 
 CLASS ltcl_zlib IMPLEMENTATION.
 
-  METHOD test01.
-* todo
+  METHOD identity.
+
+    DATA: lv_compressed TYPE xstring,
+          lv_raw        TYPE xstring.
+
+    CONSTANTS: c_raw TYPE xstring VALUE '00010203040506070809'.
+
+
+    lv_compressed = lcl_zlib=>compress( c_raw ).
+    lv_raw = lcl_zlib=>decompress( lv_compressed ).
+
+    cl_abap_unit_assert=>assert_not_initial( lv_raw ).
+    cl_abap_unit_assert=>assert_equals( act = lv_raw
+                                        exp = c_raw ).
+
+  ENDMETHOD.
+
+  METHOD decompress.
+
+    DATA: lv_raw TYPE xstring.
+
+    CONSTANTS:
+      c_raw        TYPE xstring VALUE '48656C6C6F20576F726C64210D0A',
+      c_compressed TYPE xstring VALUE '789CF348CDC9C95708CF2FCA4951E4E5020024E90455'.
+
+
+    lv_raw = lcl_zlib=>decompress( c_compressed ).
+
+    cl_abap_unit_assert=>assert_not_initial( lv_raw ).
+    cl_abap_unit_assert=>assert_equals( act = lv_raw
+                                        exp = c_raw ).
+
   ENDMETHOD.
 
 ENDCLASS.
