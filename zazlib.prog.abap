@@ -35,9 +35,57 @@ CLASS lcl_zlib DEFINITION FINAL.
                   iv_expected   TYPE i OPTIONAL
         RETURNING VALUE(rv_raw) TYPE xstring.
 
+  PRIVATE SECTION.
+    CLASS-METHODS:
+      to_bits
+        IMPORTING iv_hex         TYPE xsequence
+        RETURNING VALUE(rv_bits) TYPE string,
+      to_int
+        IMPORTING iv_bits       TYPE clike
+        RETURNING VALUE(rv_int) TYPE i.
+
 ENDCLASS.
 
 CLASS lcl_zlib IMPLEMENTATION.
+
+  METHOD to_int.
+
+    DATA: lv_c    TYPE c LENGTH 1,
+          lv_x    TYPE x LENGTH 1,
+          lv_bits TYPE string.
+
+
+    lv_bits = iv_bits.
+    WHILE NOT lv_bits IS INITIAL.
+      lv_c = lv_bits.
+      SET BIT sy-index OF lv_x TO lv_c.
+      lv_bits = lv_bits+1.
+    ENDWHILE.
+
+    rv_int = lv_x.
+
+  ENDMETHOD.
+
+  METHOD to_bits.
+
+    DATA: lv_x   TYPE x LENGTH 1,
+          lv_c   TYPE c LENGTH 1,
+          lv_bit TYPE i,
+          lv_hex TYPE xstring.
+
+
+    lv_hex = iv_hex.
+    WHILE NOT lv_hex IS INITIAL.
+      lv_x = lv_hex.
+      DO 8 TIMES.
+        lv_bit = 9 - sy-index.
+        GET BIT lv_bit OF lv_x INTO lv_c.
+        CONCATENATE rv_bits lv_c INTO rv_bits.
+      ENDDO.
+      lv_hex = lv_hex+1.
+    ENDWHILE.
+
+  ENDMETHOD.
 
   METHOD compress.
 
@@ -48,11 +96,41 @@ CLASS lcl_zlib IMPLEMENTATION.
 
   METHOD decompress.
 
+    DATA: lv_bits TYPE string,
+          lv_tmp  TYPE xstring.
+
+
     IF iv_compressed IS INITIAL.
       RETURN.
     ENDIF.
 
+    lv_tmp = iv_compressed+2.
+    lv_bits = to_bits( lv_tmp ).
+
+    WRITE: / 'BFINAL =', lv_bits(1).
+    WRITE: / 'BTYPE  =', lv_bits+1(2), '(wrong endianness)'.
+    lv_bits = lv_bits+3.
+
+    WRITE: / lv_bits(8).
+
+    IF lv_bits >= '00110000' AND lv_bits <= '10111111'.
+      WRITE: / '1yes'.
+
+      lv_bits = lv_bits(8). " todo
+      DATA(lv_int) = to_int( lv_bits ).
+      WRITE: / lv_int.
+    ENDIF.
+    IF lv_bits >= '110010000' AND lv_bits <= '111111111'.
+      WRITE: / '2yes'.
+    ENDIF.
+    IF lv_bits >= '0000000' AND lv_bits <= '0010111'.
+      WRITE: / '3yes'.
+    ENDIF.
+    IF lv_bits >= '11000000' AND lv_bits <= '11000111'.
+      WRITE: / '4yes'.
+    ENDIF.
 * todo
+
   ENDMETHOD.
 
 ENDCLASS.
@@ -114,7 +192,14 @@ ENDCLASS.
 CLASS lcl_app IMPLEMENTATION.
 
   METHOD run.
-    WRITE: / 'todo'.
+
+    CONSTANTS:
+*      c_compressed TYPE xstring VALUE '789CF348CDC9C95708CF2FCA4951E4E5020024E90455'.
+      c_compressed TYPE xstring VALUE '789C0B492D2EC9CC4B0F815000'.
+
+
+    lcl_zlib=>decompress( c_compressed ).
+
   ENDMETHOD.
 
 ENDCLASS.
