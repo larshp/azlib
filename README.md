@@ -25,3 +25,5 @@ http://www.gzip.org/zlib/rfc-deflate.html
 http://www.zlib.net/feldspar.html
 
 http://stackoverflow.com/questions/7391563/struggling-with-inflate-algorithm
+
+http://stackoverflow.com/questions/7447541/length-values-from-deflate-algorithm
