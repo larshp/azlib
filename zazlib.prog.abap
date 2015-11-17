@@ -91,9 +91,9 @@ CLASS lcl_zlib IMPLEMENTATION.
 
     lv_bits = iv_bits.
 
-    IF strlen( lv_bits ) < 8.
+    WHILE strlen( lv_bits ) < 8.
       CONCATENATE '0' lv_bits INTO lv_bits.
-    ENDIF.
+    ENDWHILE.
 
     WHILE NOT lv_bits IS INITIAL.
       lv_c = lv_bits.
@@ -152,36 +152,78 @@ CLASS lcl_zlib IMPLEMENTATION.
 
   METHOD map_distance.
 
-*0   0    1
-*1   0    2
-*2   0    3
-*3   0    4
-*4   1   5,6
-*5   1   7,8
-*6   2   9-12
-*7   2  13-16
-*8   3  17-24
-*9   3  25-32
-*10   4     33-48
-*11   4     49-64
-*12   5     65-96
-*13   5     97-128
-*14   6    129-192
-*15   6    193-256
-*16   7    257-384
-*17   7    385-512
-*18   8    513-768
-*19   8   769-1024
-*20    9   1025-1536
-*21    9   1537-2048
-*22   10   2049-3072
-*23   10   3073-4096
-*24   11   4097-6144
-*25   11   6145-8192
-*26   12  8193-12288
-*27   12 12289-16384
-*28   13 16385-24576
-*29   13 24577-32768
+    DATA: lv_tmp TYPE string.
+
+    DEFINE _distance.
+      lv_tmp = take_bits( &1 ).
+      rv_distance = bits_to_int( lv_tmp ).
+      rv_distance = rv_distance + &2.
+    END-OF-DEFINITION.
+
+    CASE iv_code.
+      WHEN 0.
+        _distance 0 1.
+      WHEN 1.
+        _distance 0 2.
+      WHEN 2.
+        _distance 0 3.
+      WHEN 3.
+        _distance 0 4.
+      WHEN 4.
+        _distance 1 5.
+      WHEN 5.
+        _distance 1 7.
+      WHEN 6.
+        _distance 2 9.
+      WHEN 7.
+        _distance 2 13.
+      WHEN 8.
+        _distance 3 17.
+      WHEN 9.
+        _distance 3 25.
+      WHEN 10.
+        _distance 4 33.
+      WHEN 11.
+        _distance 4 49.
+      WHEN 12.
+        _distance 5 65.
+      WHEN 13.
+        _distance 5 97.
+      WHEN 14.
+        _distance 6 129.
+      WHEN 15.
+        _distance 6 193.
+      WHEN 16.
+        _distance 7 257.
+      WHEN 17.
+        _distance 7 385.
+      WHEN 18.
+        _distance 8 513.
+      WHEN 19.
+        _distance 8 769.
+      WHEN 20.
+        _distance 9 1025.
+      WHEN 21.
+        _distance 9 1537.
+      WHEN 22.
+        _distance 10 2049.
+      WHEN 23.
+        _distance 10 3073.
+      WHEN 24.
+        _distance 11 4097.
+      WHEN 25.
+        _distance 11 6145.
+      WHEN 26.
+        _distance 12 8193.
+      WHEN 27.
+        _distance 12 12289.
+      WHEN 28.
+        _distance 13 16385.
+      WHEN 29.
+        _distance 13 24577.
+      WHEN OTHERS.
+        BREAK-POINT.
+    ENDCASE.
 
   ENDMETHOD.
 
@@ -197,64 +239,64 @@ CLASS lcl_zlib IMPLEMENTATION.
     END-OF-DEFINITION.
 
     CASE iv_code.
-      WHEN '257'.
-        rv_length = 3.
-      WHEN '258'.
-        rv_length = 4.
-      WHEN '259'.
-        rv_length = 5.
-      WHEN '260'.
-        rv_length = 6.
-      WHEN '261'.
-        rv_length = 7.
-      WHEN '262'.
-        rv_length = 8.
-      WHEN '263'.
-        rv_length = 9.
-      WHEN '264'.
-        rv_length = 10.
-      WHEN '265'.
+      WHEN 257.
+        _length 0 3.
+      WHEN 258.
+        _length 0 4.
+      WHEN 259.
+        _length 0 5.
+      WHEN 260.
+        _length 0 6.
+      WHEN 261.
+        _length 0 7.
+      WHEN 262.
+        _length 0 8.
+      WHEN 263.
+        _length 0 9.
+      WHEN 264.
+        _length 0 10.
+      WHEN 265.
         _length 1 11.
-      WHEN '266'.
+      WHEN 266.
         _length 1 13.
-      WHEN '267'.
+      WHEN 267.
         _length 1 15.
-      WHEN '268'.
+      WHEN 268.
         _length 1 17.
-      WHEN '269'.
+      WHEN 269.
         _length 2 19.
-      WHEN '270'.
+      WHEN 270.
         _length 2 23.
-      WHEN '271'.
+      WHEN 271.
         _length 2 27.
-      WHEN '272'.
+      WHEN 272.
         _length 2 31.
-      WHEN '273'.
+      WHEN 273.
         _length 3 35.
-      WHEN '274'.
+      WHEN 274.
         _length 3 43.
-      WHEN '275'.
+      WHEN 275.
         _length 3 51.
-      WHEN '276'.
+      WHEN 276.
         _length 3 59.
-      WHEN '277'.
+      WHEN 277.
         _length 4 67.
-      WHEN '278'.
+      WHEN 278.
         _length 4 83.
-      WHEN '279'.
+      WHEN 279.
         _length 4 99.
-      WHEN '280'.
+      WHEN 280.
         _length 4 115.
-      WHEN '281'.
+      WHEN 281.
         _length 5 131.
-      WHEN '282'.
+      WHEN 282.
         _length 5 163.
-      WHEN '283'.
+      WHEN 283.
         _length 5 195.
-      WHEN '284'.
+      WHEN 284.
         _length 5 227.
-      WHEN '285'.
-        rv_length = 258.
+      WHEN 285.
+        _length 0 258.
       WHEN OTHERS.
         BREAK-POINT.
     ENDCASE.
@@ -280,33 +322,38 @@ CLASS lcl_zlib IMPLEMENTATION.
 * skip zlib header, todo
     take_bits( 16 ).
 
-    lv_tmp = take_bits( 3 ).
-    WRITE: / 'BFINAL =', lv_tmp(1).
-    WRITE: / 'BTYPE  =', lv_tmp+1(2), '(wrong endianness)'.
+    lv_tmp = take_bits( 1 ).
+*    WRITE: / 'BFINAL =', lv_tmp.
+    IF lv_tmp <> '1'.
+      BREAK-POINT.
+    ENDIF.
+    lv_tmp = take_bits( 2 ).
+*    WRITE: / 'BTYPE  =', lv_tmp, '(wrong endianness)'.
+    IF lv_tmp <> '10'.
+      BREAK-POINT.
+    ENDIF.
 
     WHILE strlen( mv_bits ) > 0.
-      WRITE: / mv_bits.
       IF mv_bits >= '00110000' AND mv_bits <= '10111111'.
         lv_tmp = take_bits( 8 ).
         lv_int = bits_to_int( lv_tmp ).
         lv_int = lv_int - 48.
 
         lv_x = int_to_hex( lv_int ).
-        WRITE: / lv_x.
         CONCATENATE rv_raw lv_x INTO rv_raw IN BYTE MODE.
       ELSEIF mv_bits >= '110010000' AND mv_bits <= '111111111'.
         BREAK-POINT.
         EXIT.
-      ELSEIF mv_bits = '0000000'.
+      ELSEIF mv_bits(7) = '0000000'.
 * todo, end of block
-        BREAK-POINT.
+        RETURN.
       ELSEIF mv_bits > '0000000' AND mv_bits <= '0010111'.
         read_pair(
           IMPORTING
             ev_length   = lv_length
             ev_distance = lv_distance ).
-        BREAK-POINT.
-        EXIT.
+        lv_distance = xstrlen( rv_raw ) - lv_distance.
+        CONCATENATE rv_raw rv_raw+lv_distance(lv_length) INTO rv_raw IN BYTE MODE.
       ELSEIF mv_bits >= '11000000' AND mv_bits <= '11000111'.
         BREAK-POINT.
         EXIT.
@@ -377,7 +424,7 @@ CLASS lcl_app IMPLEMENTATION.
   METHOD run.
 
     CONSTANTS:
-*      c_compressed TYPE xstring VALUE '789CF348CDC9C95708CF2FCA4951E4E5020024E90455'.
+*     c_compressed TYPE xstring VALUE '789CD5586D6FDB3610FE9E5F71D83034CDE6BC10'.
       c_compressed TYPE xstring VALUE '789C0B492D2EC9CC4B0F815000'.
 
 
