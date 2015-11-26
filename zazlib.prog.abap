@@ -29,11 +29,11 @@ CLASS lcl_zlib DEFINITION FINAL.
     CLASS-METHODS:
       compress
         IMPORTING iv_raw               TYPE xsequence
-        RETURNING VALUE(rv_compressed) TYPE xstring,
+        RETURNING value(rv_compressed) TYPE xstring,
       decompress
         IMPORTING iv_compressed TYPE xsequence
                   iv_expected   TYPE i OPTIONAL
-        RETURNING VALUE(rv_raw) TYPE xstring.
+        RETURNING value(rv_raw) TYPE xstring.
 
   PRIVATE SECTION.
     CLASS-DATA: mv_bits TYPE string.
@@ -41,29 +41,34 @@ CLASS lcl_zlib DEFINITION FINAL.
     CLASS-METHODS:
       map_length
         IMPORTING iv_code          TYPE i
-        RETURNING VALUE(rv_length) TYPE i,
+        RETURNING value(rv_length) TYPE i,
       map_distance
         IMPORTING iv_code            TYPE i
-        RETURNING VALUE(rv_distance) TYPE i,
+        RETURNING value(rv_distance) TYPE i,
       take_bits
         IMPORTING iv_count       TYPE i
-        RETURNING VALUE(rv_bits) TYPE string,
+        RETURNING value(rv_bits) TYPE string,
       hex_to_bits
         IMPORTING iv_hex         TYPE xsequence
-        RETURNING VALUE(rv_bits) TYPE string,
+        RETURNING value(rv_bits) TYPE string,
       bits_to_int
         IMPORTING iv_bits       TYPE clike
-        RETURNING VALUE(rv_int) TYPE i,
+        RETURNING value(rv_int) TYPE i,
       read_pair
         EXPORTING
           ev_length   TYPE i
           ev_distance TYPE i,
       int_to_hex
         IMPORTING iv_int        TYPE i
-        RETURNING VALUE(rv_hex) TYPE xstring.
+        RETURNING value(rv_hex) TYPE xstring.
 
-ENDCLASS.
+ENDCLASS.                    "lcl_zlib DEFINITION
 
+*----------------------------------------------------------------------*
+*       CLASS lcl_zlib IMPLEMENTATION
+*----------------------------------------------------------------------*
+*
+*----------------------------------------------------------------------*
 CLASS lcl_zlib IMPLEMENTATION.
 
   METHOD take_bits.
@@ -71,7 +76,7 @@ CLASS lcl_zlib IMPLEMENTATION.
     rv_bits = mv_bits(iv_count).
     mv_bits = mv_bits+iv_count.
 
-  ENDMETHOD.
+  ENDMETHOD.                    "take_bits
 
   METHOD int_to_hex.
 
@@ -81,7 +86,7 @@ CLASS lcl_zlib IMPLEMENTATION.
     lv_x = iv_int.
     rv_hex = lv_x.
 
-  ENDMETHOD.
+  ENDMETHOD.                    "int_to_hex
 
   METHOD bits_to_int.
 
@@ -103,7 +108,7 @@ CLASS lcl_zlib IMPLEMENTATION.
 
     rv_int = lv_x.
 
-  ENDMETHOD.
+  ENDMETHOD.                    "bits_to_int
 
   METHOD hex_to_bits.
 
@@ -124,14 +129,14 @@ CLASS lcl_zlib IMPLEMENTATION.
       lv_hex = lv_hex+1.
     ENDWHILE.
 
-  ENDMETHOD.
+  ENDMETHOD.                    "hex_to_bits
 
   METHOD compress.
 
     ASSERT NOT iv_raw IS INITIAL.
 
 * todo
-  ENDMETHOD.
+  ENDMETHOD.                    "compress
 
   METHOD read_pair.
 
@@ -148,7 +153,7 @@ CLASS lcl_zlib IMPLEMENTATION.
     lv_int = bits_to_int( lv_tmp ).
     ev_distance = map_distance( lv_int ).
 
-  ENDMETHOD.
+  ENDMETHOD.                    "read_pair
 
   METHOD map_distance.
 
@@ -225,7 +230,7 @@ CLASS lcl_zlib IMPLEMENTATION.
         BREAK-POINT.
     ENDCASE.
 
-  ENDMETHOD.
+  ENDMETHOD.                    "map_distance
 
   METHOD map_length.
 
@@ -301,7 +306,7 @@ CLASS lcl_zlib IMPLEMENTATION.
         BREAK-POINT.
     ENDCASE.
 
-  ENDMETHOD.
+  ENDMETHOD.                    "map_length
 
   METHOD decompress.
 
@@ -361,10 +366,15 @@ CLASS lcl_zlib IMPLEMENTATION.
 * todo
     ENDWHILE.
 
-  ENDMETHOD.
+  ENDMETHOD.                    "decompress
 
-ENDCLASS.
+ENDCLASS.                    "lcl_zlib IMPLEMENTATION
 
+*----------------------------------------------------------------------*
+*       CLASS ltcl_zlib DEFINITION
+*----------------------------------------------------------------------*
+*
+*----------------------------------------------------------------------*
 CLASS ltcl_zlib DEFINITION FOR TESTING RISK LEVEL HARMLESS DURATION SHORT FINAL.
 
   PRIVATE SECTION.
@@ -372,8 +382,13 @@ CLASS ltcl_zlib DEFINITION FOR TESTING RISK LEVEL HARMLESS DURATION SHORT FINAL.
       identity FOR TESTING,
       decompress FOR TESTING RAISING cx_dynamic_check.
 
-ENDCLASS.
+ENDCLASS.                    "ltcl_zlib DEFINITION
 
+*----------------------------------------------------------------------*
+*       CLASS ltcl_zlib IMPLEMENTATION
+*----------------------------------------------------------------------*
+*
+*----------------------------------------------------------------------*
 CLASS ltcl_zlib IMPLEMENTATION.
 
   METHOD identity.
@@ -391,7 +406,7 @@ CLASS ltcl_zlib IMPLEMENTATION.
     cl_abap_unit_assert=>assert_equals( act = lv_raw
                                         exp = c_raw ).
 
-  ENDMETHOD.
+  ENDMETHOD.                    "identity
 
   METHOD decompress.
 
@@ -408,17 +423,27 @@ CLASS ltcl_zlib IMPLEMENTATION.
     cl_abap_unit_assert=>assert_equals( act = lv_raw
                                         exp = c_raw ).
 
-  ENDMETHOD.
+  ENDMETHOD.                    "decompress
 
-ENDCLASS.
+ENDCLASS.                    "ltcl_zlib IMPLEMENTATION
 
+*----------------------------------------------------------------------*
+*       CLASS lcl_app DEFINITION
+*----------------------------------------------------------------------*
+*
+*----------------------------------------------------------------------*
 CLASS lcl_app DEFINITION FINAL.
 
   PUBLIC SECTION.
     CLASS-METHODS: run.
 
-ENDCLASS.
+ENDCLASS.                    "lcl_app DEFINITION
 
+*----------------------------------------------------------------------*
+*       CLASS lcl_app IMPLEMENTATION
+*----------------------------------------------------------------------*
+*
+*----------------------------------------------------------------------*
 CLASS lcl_app IMPLEMENTATION.
 
   METHOD run.
@@ -427,13 +452,15 @@ CLASS lcl_app IMPLEMENTATION.
 *     c_compressed TYPE xstring VALUE '789CD5586D6FDB3610FE9E5F71D83034CDE6BC10'.
       c_compressed TYPE xstring VALUE '789C0B492D2EC9CC4B0F815000'.
 
+    DATA: lv_raw TYPE xstring.
 
-    DATA(lv_raw) = lcl_zlib=>decompress( c_compressed ).
+
+    lv_raw = lcl_zlib=>decompress( c_compressed ).
     WRITE: / 'decompressed:', lv_raw.
 
-  ENDMETHOD.
+  ENDMETHOD.                    "run
 
-ENDCLASS.
+ENDCLASS.                    "lcl_app IMPLEMENTATION
 
 START-OF-SELECTION.
   lcl_app=>run( ).
