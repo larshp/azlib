@@ -23,6 +23,106 @@ REPORT zazlib.
 * SOFTWARE.
 ********************************************************************************
 
+* todo, refactor to classes: bitstream, conversion?
+
+CONSTANTS: c_maxbits TYPE i VALUE 15.
+
+*----------------------------------------------------------------------*
+*       CLASS lcl_zlib_huffman DEFINITION
+*----------------------------------------------------------------------*
+*
+*----------------------------------------------------------------------*
+CLASS lcl_zlib_huffman DEFINITION FINAL.
+
+  PUBLIC SECTION.
+    TYPES: ty_lengths TYPE STANDARD TABLE OF i WITH DEFAULT KEY.
+
+    METHODS:
+      constructor
+        IMPORTING it_lengths TYPE ty_lengths,
+      count
+        IMPORTING iv_index TYPE i
+        RETURNING value(rv_value) TYPE i,
+      symbol
+        IMPORTING iv_index TYPE i
+        RETURNING value(rv_value) TYPE i.
+
+  PRIVATE SECTION.
+
+    DATA: mt_count  TYPE STANDARD TABLE OF i WITH DEFAULT KEY,
+          mt_symbol TYPE STANDARD TABLE OF i WITH DEFAULT KEY.
+
+ENDCLASS.                    "lcl_zlib_huffman DEFINITION
+
+*----------------------------------------------------------------------*
+*       CLASS lcl_zlib_huffman DEFINITION
+*----------------------------------------------------------------------*
+*
+*----------------------------------------------------------------------*
+CLASS lcl_zlib_huffman IMPLEMENTATION.
+
+  METHOD count.
+    READ TABLE mt_count INDEX iv_index INTO rv_value.     "#EC CI_SUBRC
+  ENDMETHOD.                    "count
+
+  METHOD symbol.
+    READ TABLE mt_symbol INDEX iv_index INTO rv_value.    "#EC CI_SUBRC
+  ENDMETHOD.                    "symbol
+
+  METHOD constructor.
+
+    TYPES: BEGIN OF ty_offset,
+             value TYPE i,
+             index TYPE i,
+           END OF ty_offset.
+
+    DATA: lv_index  TYPE i,
+          lt_offset TYPE TABLE OF ty_offset,
+          lv_value  TYPE i.
+
+    FIELD-SYMBOLS: <ls_offset> LIKE LINE OF lt_offset,
+                   <lv_i>      LIKE LINE OF it_lengths.
+
+
+    DO c_maxbits TIMES.
+      APPEND 0 TO mt_count.
+    ENDDO.
+    LOOP AT it_lengths INTO lv_index.
+      READ TABLE mt_count INDEX lv_index ASSIGNING <lv_i>.
+      ASSERT sy-subrc = 0.
+      <lv_i> = <lv_i> + 1.
+    ENDLOOP.
+
+*    LOOP AT mt_count ASSIGNING <lv_i>.
+*      WRITE: / 'h count', sy-tabix, <lv_i>.
+*    ENDLOOP.
+
+************
+
+    LOOP AT it_lengths INTO lv_value.
+      lv_index = sy-tabix.
+      APPEND INITIAL LINE TO lt_offset ASSIGNING <ls_offset>.
+      <ls_offset>-value = lv_value.
+      <ls_offset>-index = sy-tabix - 1.
+    ENDLOOP.
+    SORT lt_offset BY value ASCENDING index ASCENDING.
+    LOOP AT lt_offset ASSIGNING <ls_offset>.
+      APPEND <ls_offset>-index TO mt_symbol.
+    ENDLOOP.
+
+*    LOOP AT mt_symbol ASSIGNING <lv_i>.
+*      WRITE: / 'h symbol', sy-tabix, <lv_i>.
+*    ENDLOOP.
+
+  ENDMETHOD.                    "constructor
+
+ENDCLASS.                    "lcl_zlib_huffman DEFINITION
+
+*----------------------------------------------------------------------*
+*       CLASS lcl_zlib DEFINITION
+*----------------------------------------------------------------------*
+*
+*----------------------------------------------------------------------*
 CLASS lcl_zlib DEFINITION FINAL.
 
   PUBLIC SECTION.
@@ -32,8 +132,14 @@ CLASS lcl_zlib DEFINITION FINAL.
         RETURNING value(rv_raw) TYPE xstring.
 
   PRIVATE SECTION.
-    CLASS-DATA: mv_bits TYPE string,
-                mv_out TYPE xstring.
+    CONSTANTS: c_fixlcodes TYPE i VALUE 288,
+               c_maxdcodes TYPE i VALUE 30.
+
+    CLASS-DATA: gv_compressed TYPE xstring,
+                gv_out        TYPE xstring,
+                go_lencode    TYPE REF TO lcl_zlib_huffman,
+                go_distcode   TYPE REF TO lcl_zlib_huffman,
+                gv_bits       TYPE string.
 
     TYPES: BEGIN OF ty_pair,
              length TYPE i,
@@ -41,6 +147,9 @@ CLASS lcl_zlib DEFINITION FINAL.
            END OF ty_pair.
 
     CLASS-METHODS:
+      decode
+      IMPORTING io_huffman TYPE REF TO lcl_zlib_huffman
+        RETURNING value(rv_symbol) TYPE i,
       map_length
         IMPORTING iv_code          TYPE i
         RETURNING value(rv_length) TYPE i,
@@ -48,7 +157,11 @@ CLASS lcl_zlib DEFINITION FINAL.
         IMPORTING iv_code            TYPE i
         RETURNING value(rv_distance) TYPE i,
       dynamic,
+      fixed,
       take_bits
+        IMPORTING iv_count       TYPE i
+        RETURNING value(rv_bits) TYPE string,
+      reverse_bits
         IMPORTING iv_count       TYPE i
         RETURNING value(rv_bits) TYPE string,
       hex_to_bits
@@ -58,13 +171,16 @@ CLASS lcl_zlib DEFINITION FINAL.
         IMPORTING iv_bits       TYPE clike
         RETURNING value(rv_int) TYPE i,
       read_pair
-        IMPORTING iv_offset TYPE i
+        IMPORTING iv_length TYPE i
         RETURNING value(rs_pair) TYPE ty_pair,
       copy_out
         IMPORTING is_pair TYPE ty_pair,
       int_to_hex
         IMPORTING iv_int        TYPE i
-        RETURNING value(rv_hex) TYPE xstring.
+        RETURNING value(rv_hex) TYPE xstring,
+      reverse
+        IMPORTING iv_string TYPE string
+        RETURNING value(rv_string) TYPE string.
 
 ENDCLASS.                    "lcl_zlib DEFINITION
 
@@ -74,6 +190,101 @@ ENDCLASS.                    "lcl_zlib DEFINITION
 *
 *----------------------------------------------------------------------*
 CLASS lcl_zlib IMPLEMENTATION.
+
+  METHOD decode.
+
+    DATA: lv_bit   TYPE c LENGTH 1,
+          lv_len   TYPE i,
+          lv_count TYPE i,
+          lv_code  TYPE i,
+          lv_index TYPE i,
+          lv_first TYPE i,
+          lv_bits  TYPE string.
+
+
+    DO c_maxbits TIMES.
+      lv_len = sy-index.
+
+      lv_bit = take_bits( 1 ).
+      CONCATENATE lv_bits lv_bit INTO lv_bits.
+      lv_code = bits_to_int( lv_bits ).
+      lv_count = io_huffman->count( lv_len ).
+
+*      WRITE: / 'code', lv_code, 'count', lv_count, 'first', lv_first, 'len', lv_len.
+      IF lv_code - lv_count < lv_first.
+        rv_symbol = io_huffman->symbol( lv_index + lv_code - lv_first + 1 ).
+        RETURN.
+      ENDIF.
+      lv_index = lv_index + lv_count.
+      lv_first = lv_first + lv_count.
+      lv_first = lv_first * 2.
+    ENDDO.
+
+  ENDMETHOD.                    "decode
+
+  METHOD reverse_bits.
+
+    DATA: lv_bit TYPE c LENGTH 1.
+
+
+    DO iv_count TIMES.
+      lv_bit = take_bits( 1 ).
+      CONCATENATE rv_bits lv_bit INTO rv_bits.
+    ENDDO.
+
+  ENDMETHOD.                    "reverse_bits
+
+  METHOD fixed.
+
+    DATA: lt_lengths TYPE lcl_zlib_huffman=>ty_lengths.
+
+
+    DO 144 TIMES.
+      APPEND 8 TO lt_lengths.
+    ENDDO.
+    DO 112 TIMES.
+      APPEND 9 TO lt_lengths.
+    ENDDO.
+    DO 24 TIMES.
+      APPEND 7 TO lt_lengths.
+    ENDDO.
+    DO 8 TIMES.
+      APPEND 8 TO lt_lengths.
+    ENDDO.
+
+    CREATE OBJECT go_lencode
+      EXPORTING
+        it_lengths = lt_lengths.
+
+
+    CLEAR lt_lengths.
+    DO c_maxdcodes TIMES.
+      APPEND 5 TO lt_lengths.
+    ENDDO.
+
+    CREATE OBJECT go_distcode
+      EXPORTING
+        it_lengths = lt_lengths.
+
+  ENDMETHOD.                    "fixed
+
+  METHOD reverse.
+
+    DATA: lv_len    TYPE i,
+          lv_char   TYPE c LENGTH 1,
+          lv_string TYPE string.
+
+
+    lv_string = iv_string.
+
+    WHILE lv_string <> ''.
+      lv_len = strlen( lv_string ) - 1.
+      lv_char = lv_string+lv_len(1).
+      CONCATENATE rv_string lv_char INTO rv_string.
+      lv_string = lv_string(lv_len).
+    ENDWHILE.
+
+  ENDMETHOD.                    "reverse
 
   METHOD copy_out.
 
@@ -86,29 +297,62 @@ CLASS lcl_zlib IMPLEMENTATION.
           lv_x        TYPE x LENGTH 1.
 
 
-    lv_distance = xstrlen( mv_out ) - is_pair-distance.
+    lv_distance = xstrlen( gv_out ) - is_pair-distance.
     DO is_pair-length TIMES.
       lv_index = sy-tabix - 1 + lv_distance.
-      lv_x = mv_out+lv_index(1).
-      CONCATENATE mv_out lv_x INTO mv_out IN BYTE MODE.
+      lv_x = gv_out+lv_index(1).
+      CONCATENATE gv_out lv_x INTO gv_out IN BYTE MODE.
     ENDDO.
 
   ENDMETHOD.                    "copy_out
 
   METHOD dynamic.
 
-    DATA: lv_nlen TYPE i.
+    DATA: lv_nlen TYPE i,
+          lv_ndist TYPE i,
+          lv_ncode TYPE i,
+          lv_bits TYPE string,
+          lv_foo TYPE i.
 
-    lv_nlen = bits_to_int( take_bits( 5 ) ).
-    BREAK-POINT.
-*lv_nlen =
+
+    lv_bits = take_bits( 5 ).
+    lv_nlen = bits_to_int( lv_bits ) + 257.
+    lv_bits = take_bits( 5 ).
+    lv_ndist = bits_to_int( lv_bits ) + 1.
+    lv_bits = take_bits( 4 ).
+    lv_ncode = bits_to_int( lv_bits ) + 4.
+
+    DO lv_ncode TIMES.
+      lv_foo = bits_to_int( take_bits( 3 ) ).
+      WRITE: / 'foo', lv_foo.
+    ENDDO.
 
   ENDMETHOD.                    "dynamic
 
   METHOD take_bits.
 
-    rv_bits = mv_bits(iv_count).
-    mv_bits = mv_bits+iv_count.
+    DATA: lv_left TYPE i,
+          lv_index TYPE i,
+          lv_x TYPE x LENGTH 1.
+
+
+    WHILE strlen( rv_bits ) < iv_count.
+      IF gv_bits IS INITIAL.
+        lv_x = gv_compressed(1).
+        gv_bits = hex_to_bits( lv_x ).
+        gv_compressed = gv_compressed+1.
+      ENDIF.
+      lv_left = iv_count - strlen( rv_bits ).
+      IF lv_left >= strlen( gv_bits ).
+        CONCATENATE gv_bits rv_bits INTO rv_bits.
+        CLEAR gv_bits.
+      ELSE.
+        lv_index = strlen( gv_bits ) - lv_left.
+        CONCATENATE gv_bits+lv_index(lv_left) rv_bits INTO rv_bits.
+        gv_bits = gv_bits(lv_index).
+      ENDIF.
+
+    ENDWHILE.
 
   ENDMETHOD.                    "take_bits
 
@@ -156,7 +400,7 @@ CLASS lcl_zlib IMPLEMENTATION.
     WHILE NOT lv_hex IS INITIAL.
       lv_x = lv_hex.
       DO 8 TIMES.
-        lv_bit = 9 - sy-index.
+        lv_bit = sy-index.
         GET BIT lv_bit OF lv_x INTO lv_c.
         CONCATENATE rv_bits lv_c INTO rv_bits.
       ENDDO.
@@ -170,13 +414,9 @@ CLASS lcl_zlib IMPLEMENTATION.
     DATA: lv_tmp TYPE string,
           lv_int TYPE i.
 
+    rs_pair-length = map_length( iv_length ).
 
-    lv_tmp = take_bits( 7 ).
-    lv_int = bits_to_int( lv_tmp ).
-    lv_int = lv_int + iv_offset.
-    rs_pair-length = map_length( lv_int ).
-
-    lv_tmp = take_bits( 5 ).
+    lv_tmp = reverse_bits( 5 ).
     lv_int = bits_to_int( lv_tmp ).
     rs_pair-distance = map_distance( lv_int ).
 
@@ -187,7 +427,7 @@ CLASS lcl_zlib IMPLEMENTATION.
     DATA: lv_tmp TYPE string.
 
     DEFINE _distance.
-      lv_tmp = take_bits( &1 ).
+      lv_tmp = reverse_bits( &1 ).
       rv_distance = bits_to_int( lv_tmp ).
       rv_distance = rv_distance + &2.
     END-OF-DEFINITION.
@@ -265,7 +505,7 @@ CLASS lcl_zlib IMPLEMENTATION.
 
 
     DEFINE _length.
-      lv_tmp = take_bits( &1 ).
+      lv_tmp = reverse_bits( &1 ).
       rv_length = bits_to_int( lv_tmp ).
       rv_length = rv_length + &2.
     END-OF-DEFINITION.
@@ -337,58 +577,46 @@ CLASS lcl_zlib IMPLEMENTATION.
 
   METHOD decompress.
 
-    DATA: lv_int        TYPE i,
-          lv_x          TYPE x LENGTH 1,
-          ls_pair       TYPE ty_pair,
-          lv_bfinal     TYPE c LENGTH 1,
-          lv_btype      TYPE c LENGTH 2.
+    DATA: lv_x      TYPE x LENGTH 1,
+          lv_symbol TYPE i,
+          lv_bfinal TYPE c LENGTH 1,
+          lv_btype  TYPE c LENGTH 2.
 
 
     IF iv_compressed IS INITIAL.
       RETURN.
     ENDIF.
 
-    CLEAR mv_out.
-    mv_bits = hex_to_bits( iv_compressed ).
-
-* skip zlib header
-    take_bits( 16 ).
+    CLEAR gv_out.
+    gv_compressed = iv_compressed.
 
     DO.
       lv_bfinal = take_bits( 1 ).
 
       lv_btype = take_bits( 2 ).
-      CASE lv_btype. " note: wrong endianness
-        WHEN '10'. " fixed Huffman codes
-* fixed( )        .
-        WHEN '01'. " dynamic Huffman coces
+      CASE lv_btype.
+        WHEN '01'.
+          fixed( ).
+        WHEN '10'.
           dynamic( ).
-          EXIT. " todo, temporary
         WHEN OTHERS.
           BREAK-POINT.
       ENDCASE.
 
-      WHILE strlen( mv_bits ) > 0.
-        IF mv_bits >= '00110000' AND mv_bits <= '10111111'.
-          lv_int = bits_to_int( take_bits( 8 ) ) - 48.
-          lv_x = int_to_hex( lv_int ).
-          CONCATENATE mv_out lv_x INTO mv_out IN BYTE MODE.
-        ELSEIF mv_bits >= '110010000' AND mv_bits <= '111111111'.
-          BREAK-POINT.
+      DO.
+        lv_symbol = decode( go_lencode ).
+*        WRITE: / 'symbol =', lv_symbol.
+
+        IF lv_symbol < 256.
+          lv_x = int_to_hex( lv_symbol ).
+          CONCATENATE gv_out lv_x INTO gv_out IN BYTE MODE.
+        ELSEIF lv_symbol = 256.
           EXIT.
-        ELSEIF mv_bits(7) = '0000000'.
-          take_bits( 7 ).
-          EXIT.
-        ELSEIF mv_bits > '0000000' AND mv_bits <= '0010111'.
-          ls_pair = read_pair( 256 ).
-          copy_out( ls_pair ).
-        ELSEIF mv_bits >= '11000000' AND mv_bits <= '11000111'.
-          take_bits( 1 ).
-          ls_pair = read_pair( 280 - 64 ).
-          copy_out( ls_pair ).
+        ELSE.
+          copy_out( read_pair( lv_symbol ) ).
         ENDIF.
-* todo
-      ENDWHILE.
+
+      ENDDO.
 
       IF lv_bfinal = '1'.
         EXIT.
@@ -396,7 +624,7 @@ CLASS lcl_zlib IMPLEMENTATION.
 
     ENDDO.
 
-    rv_raw = mv_out.
+    rv_raw = gv_out.
 
   ENDMETHOD.                    "decompress
 
@@ -428,7 +656,7 @@ CLASS ltcl_zlib IMPLEMENTATION.
 
     CONSTANTS:
       c_raw        TYPE xstring VALUE '48656C6C6F20576F726C64210D0A',
-      c_compressed TYPE xstring VALUE '789CF348CDC9C95708CF2FCA4951E4E5020024E90455'.
+      c_compressed TYPE xstring VALUE 'F348CDC9C95708CF2FCA4951E4E5020024E90455'.
 
 
     lv_raw = lcl_zlib=>decompress( c_compressed ).
@@ -462,9 +690,9 @@ CLASS lcl_app IMPLEMENTATION.
 
   METHOD run.
 
-*    CONSTANTS:
-*     c_compressed TYPE xstring VALUE '789CD5586D6FDB3610FE9E5F71D83034CDE6BC10'.
-*      c_compressed TYPE xstring VALUE '789C0B492D2EC9CC4B0F815000'.
+    CONSTANTS:
+*     c_compressed TYPE xstring VALUE 'D5586D6FDB3610FE9E5F71D83034CDE6BC10'.
+      c_compressed TYPE xstring VALUE '0B492D2EC9CC4B0F815000'.
 
     DATA: lv_compressed TYPE xstring,
           lv_hex TYPE xstring,
@@ -476,7 +704,6 @@ CLASS lcl_app IMPLEMENTATION.
       concatenate lv_compressed lv_hex into lv_compressed in byte mode.
     END-OF-DEFINITION.
 
-    _hex '789C'.
     _hex '62601805A360148C8251300A46C1281805A360148C8251300A46C1281805'.
     _hex 'A360148C8251300A46C1281805A360148C8251300A46C1281805A360148C'.
     _hex '825130A400802038100000000000E2BF1A00000000000000000000000000'.
@@ -562,8 +789,8 @@ CLASS lcl_app IMPLEMENTATION.
     _hex '000000000000000000000000000000000000000000000000000000000000'.
     _hex '00000000000000000000000000000000000000000000000000C008'.
 
-    lv_raw = lcl_zlib=>decompress( lv_compressed ).
-    WRITE: / 'decompressed:', lv_raw.
+    lv_raw = lcl_zlib=>decompress( c_compressed ).
+*    WRITE: / 'decompressed:', lv_raw.
 
   ENDMETHOD.                    "run
 
