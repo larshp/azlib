@@ -27,16 +27,18 @@ CLASS lcl_zlib DEFINITION FINAL.
 
   PUBLIC SECTION.
     CLASS-METHODS:
-      compress
-        IMPORTING iv_raw               TYPE xsequence
-        RETURNING value(rv_compressed) TYPE xstring,
       decompress
         IMPORTING iv_compressed TYPE xsequence
-                  iv_expected   TYPE i OPTIONAL
         RETURNING value(rv_raw) TYPE xstring.
 
   PRIVATE SECTION.
-    CLASS-DATA: mv_bits TYPE string.
+    CLASS-DATA: mv_bits TYPE string,
+                mv_out TYPE xstring.
+
+    TYPES: BEGIN OF ty_pair,
+             length TYPE i,
+             distance TYPE i,
+           END OF ty_pair.
 
     CLASS-METHODS:
       map_length
@@ -45,6 +47,7 @@ CLASS lcl_zlib DEFINITION FINAL.
       map_distance
         IMPORTING iv_code            TYPE i
         RETURNING value(rv_distance) TYPE i,
+      dynamic,
       take_bits
         IMPORTING iv_count       TYPE i
         RETURNING value(rv_bits) TYPE string,
@@ -55,9 +58,10 @@ CLASS lcl_zlib DEFINITION FINAL.
         IMPORTING iv_bits       TYPE clike
         RETURNING value(rv_int) TYPE i,
       read_pair
-        EXPORTING
-          ev_length   TYPE i
-          ev_distance TYPE i,
+        IMPORTING iv_offset TYPE i
+        RETURNING value(rs_pair) TYPE ty_pair,
+      copy_out
+        IMPORTING is_pair TYPE ty_pair,
       int_to_hex
         IMPORTING iv_int        TYPE i
         RETURNING value(rv_hex) TYPE xstring.
@@ -70,6 +74,36 @@ ENDCLASS.                    "lcl_zlib DEFINITION
 *
 *----------------------------------------------------------------------*
 CLASS lcl_zlib IMPLEMENTATION.
+
+  METHOD copy_out.
+
+* copy one byte at a time, it is not possible to copy using
+* string offsets, as it might copy data that does not exist
+* in mv_out yet
+
+    DATA: lv_distance TYPE i,
+          lv_index    TYPE i,
+          lv_x        TYPE x LENGTH 1.
+
+
+    lv_distance = xstrlen( mv_out ) - is_pair-distance.
+    DO is_pair-length TIMES.
+      lv_index = sy-tabix - 1 + lv_distance.
+      lv_x = mv_out+lv_index(1).
+      CONCATENATE mv_out lv_x INTO mv_out IN BYTE MODE.
+    ENDDO.
+
+  ENDMETHOD.                    "copy_out
+
+  METHOD dynamic.
+
+    DATA: lv_nlen TYPE i.
+
+    lv_nlen = bits_to_int( take_bits( 5 ) ).
+    BREAK-POINT.
+*lv_nlen =
+
+  ENDMETHOD.                    "dynamic
 
   METHOD take_bits.
 
@@ -131,13 +165,6 @@ CLASS lcl_zlib IMPLEMENTATION.
 
   ENDMETHOD.                    "hex_to_bits
 
-  METHOD compress.
-
-    ASSERT NOT iv_raw IS INITIAL.
-
-* todo
-  ENDMETHOD.                    "compress
-
   METHOD read_pair.
 
     DATA: lv_tmp TYPE string,
@@ -146,12 +173,12 @@ CLASS lcl_zlib IMPLEMENTATION.
 
     lv_tmp = take_bits( 7 ).
     lv_int = bits_to_int( lv_tmp ).
-    lv_int = lv_int + 256.
-    ev_length = map_length( lv_int ).
+    lv_int = lv_int + iv_offset.
+    rs_pair-length = map_length( lv_int ).
 
     lv_tmp = take_bits( 5 ).
     lv_int = bits_to_int( lv_tmp ).
-    ev_distance = map_distance( lv_int ).
+    rs_pair-distance = map_distance( lv_int ).
 
   ENDMETHOD.                    "read_pair
 
@@ -312,59 +339,64 @@ CLASS lcl_zlib IMPLEMENTATION.
 
     DATA: lv_int        TYPE i,
           lv_x          TYPE x LENGTH 1,
-          lv_length     TYPE i,
-          lv_distance   TYPE i,
-          lv_tmp        TYPE string,
-          lv_compressed TYPE xstring.
+          ls_pair       TYPE ty_pair,
+          lv_bfinal     TYPE c LENGTH 1,
+          lv_btype      TYPE c LENGTH 2.
 
 
     IF iv_compressed IS INITIAL.
       RETURN.
     ENDIF.
 
+    CLEAR mv_out.
     mv_bits = hex_to_bits( iv_compressed ).
 
-* skip zlib header, todo
+* skip zlib header
     take_bits( 16 ).
 
-    lv_tmp = take_bits( 1 ).
-*    WRITE: / 'BFINAL =', lv_tmp.
-    IF lv_tmp <> '1'.
-      BREAK-POINT.
-    ENDIF.
-    lv_tmp = take_bits( 2 ).
-*    WRITE: / 'BTYPE  =', lv_tmp, '(wrong endianness)'.
-    IF lv_tmp <> '10'.
-      BREAK-POINT.
-    ENDIF.
+    DO.
+      lv_bfinal = take_bits( 1 ).
 
-    WHILE strlen( mv_bits ) > 0.
-      IF mv_bits >= '00110000' AND mv_bits <= '10111111'.
-        lv_tmp = take_bits( 8 ).
-        lv_int = bits_to_int( lv_tmp ).
-        lv_int = lv_int - 48.
+      lv_btype = take_bits( 2 ).
+      CASE lv_btype. " note: wrong endianness
+        WHEN '10'. " fixed Huffman codes
+* fixed( )        .
+        WHEN '01'. " dynamic Huffman coces
+          dynamic( ).
+          EXIT. " todo, temporary
+        WHEN OTHERS.
+          BREAK-POINT.
+      ENDCASE.
 
-        lv_x = int_to_hex( lv_int ).
-        CONCATENATE rv_raw lv_x INTO rv_raw IN BYTE MODE.
-      ELSEIF mv_bits >= '110010000' AND mv_bits <= '111111111'.
-        BREAK-POINT.
-        EXIT.
-      ELSEIF mv_bits(7) = '0000000'.
-* todo, end of block
-        RETURN.
-      ELSEIF mv_bits > '0000000' AND mv_bits <= '0010111'.
-        read_pair(
-          IMPORTING
-            ev_length   = lv_length
-            ev_distance = lv_distance ).
-        lv_distance = xstrlen( rv_raw ) - lv_distance.
-        CONCATENATE rv_raw rv_raw+lv_distance(lv_length) INTO rv_raw IN BYTE MODE.
-      ELSEIF mv_bits >= '11000000' AND mv_bits <= '11000111'.
-        BREAK-POINT.
+      WHILE strlen( mv_bits ) > 0.
+        IF mv_bits >= '00110000' AND mv_bits <= '10111111'.
+          lv_int = bits_to_int( take_bits( 8 ) ) - 48.
+          lv_x = int_to_hex( lv_int ).
+          CONCATENATE mv_out lv_x INTO mv_out IN BYTE MODE.
+        ELSEIF mv_bits >= '110010000' AND mv_bits <= '111111111'.
+          BREAK-POINT.
+          EXIT.
+        ELSEIF mv_bits(7) = '0000000'.
+          take_bits( 7 ).
+          EXIT.
+        ELSEIF mv_bits > '0000000' AND mv_bits <= '0010111'.
+          ls_pair = read_pair( 256 ).
+          copy_out( ls_pair ).
+        ELSEIF mv_bits >= '11000000' AND mv_bits <= '11000111'.
+          take_bits( 1 ).
+          ls_pair = read_pair( 280 - 64 ).
+          copy_out( ls_pair ).
+        ENDIF.
+* todo
+      ENDWHILE.
+
+      IF lv_bfinal = '1'.
         EXIT.
       ENDIF.
-* todo
-    ENDWHILE.
+
+    ENDDO.
+
+    rv_raw = mv_out.
 
   ENDMETHOD.                    "decompress
 
@@ -379,7 +411,6 @@ CLASS ltcl_zlib DEFINITION FOR TESTING RISK LEVEL HARMLESS DURATION SHORT FINAL.
 
   PRIVATE SECTION.
     METHODS:
-      identity FOR TESTING,
       decompress FOR TESTING RAISING cx_dynamic_check.
 
 ENDCLASS.                    "ltcl_zlib DEFINITION
@@ -390,23 +421,6 @@ ENDCLASS.                    "ltcl_zlib DEFINITION
 *
 *----------------------------------------------------------------------*
 CLASS ltcl_zlib IMPLEMENTATION.
-
-  METHOD identity.
-
-    DATA: lv_compressed TYPE xstring,
-          lv_raw        TYPE xstring.
-
-    CONSTANTS: c_raw TYPE xstring VALUE '00010203040506070809'.
-
-
-    lv_compressed = lcl_zlib=>compress( c_raw ).
-    lv_raw = lcl_zlib=>decompress( lv_compressed ).
-
-    cl_abap_unit_assert=>assert_not_initial( lv_raw ).
-    cl_abap_unit_assert=>assert_equals( act = lv_raw
-                                        exp = c_raw ).
-
-  ENDMETHOD.                    "identity
 
   METHOD decompress.
 
@@ -448,9 +462,9 @@ CLASS lcl_app IMPLEMENTATION.
 
   METHOD run.
 
-    CONSTANTS:
+*    CONSTANTS:
 *     c_compressed TYPE xstring VALUE '789CD5586D6FDB3610FE9E5F71D83034CDE6BC10'.
-      c_compressed TYPE xstring VALUE '789C0B492D2EC9CC4B0F815000'.
+*      c_compressed TYPE xstring VALUE '789C0B492D2EC9CC4B0F815000'.
 
     DATA: lv_compressed TYPE xstring,
           lv_hex TYPE xstring,
@@ -548,7 +562,7 @@ CLASS lcl_app IMPLEMENTATION.
     _hex '000000000000000000000000000000000000000000000000000000000000'.
     _hex '00000000000000000000000000000000000000000000000000C008'.
 
-    lv_raw = lcl_zlib=>decompress( c_compressed ).
+    lv_raw = lcl_zlib=>decompress( lv_compressed ).
     WRITE: / 'decompressed:', lv_raw.
 
   ENDMETHOD.                    "run
