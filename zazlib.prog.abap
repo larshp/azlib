@@ -40,10 +40,10 @@ CLASS lcl_zlib_huffman DEFINITION FINAL.
     METHODS:
       constructor
         IMPORTING it_lengths TYPE ty_lengths,
-      count
+      get_count
         IMPORTING iv_index TYPE i
         RETURNING value(rv_value) TYPE i,
-      symbol
+      get_symbol
         IMPORTING iv_index TYPE i
         RETURNING value(rv_value) TYPE i.
 
@@ -61,28 +61,25 @@ ENDCLASS.                    "lcl_zlib_huffman DEFINITION
 *----------------------------------------------------------------------*
 CLASS lcl_zlib_huffman IMPLEMENTATION.
 
-  METHOD count.
+  METHOD get_count.
     READ TABLE mt_count INDEX iv_index INTO rv_value.     "#EC CI_SUBRC
   ENDMETHOD.                    "count
 
-  METHOD symbol.
+  METHOD get_symbol.
     READ TABLE mt_symbol INDEX iv_index INTO rv_value.    "#EC CI_SUBRC
   ENDMETHOD.                    "symbol
 
   METHOD constructor.
 
-*    TYPES: BEGIN OF ty_offset,
-*             value TYPE i,
-*             index TYPE i,
-*           END OF ty_offset.
-*
     DATA: lv_index  TYPE i,
           lt_offset TYPE TABLE OF i,
-          lv_prev type i,
-          lv_count LIKE LINE OF mt_count,
-          lv_value  TYPE i.
+          lv_length LIKE LINE OF it_lengths,
+          lv_prev   TYPE i,
+          lv_count  LIKE LINE OF mt_count.
+*          lv_value  TYPE i.
 
-    FIELD-SYMBOLS: <ls_offset> LIKE LINE OF lt_offset,
+    FIELD-SYMBOLS: <lv_offset> LIKE LINE OF lt_offset,
+                   <lv_symbol> LIKE LINE OF mt_symbol,
                    <lv_i>      LIKE LINE OF it_lengths.
 
 
@@ -98,9 +95,9 @@ CLASS lcl_zlib_huffman IMPLEMENTATION.
       <lv_i> = <lv_i> + 1.
     ENDLOOP.
 
-    LOOP AT mt_count ASSIGNING <lv_i>.
-      WRITE: / 'h count', sy-tabix, <lv_i>.
-    ENDLOOP.
+*    LOOP AT mt_count ASSIGNING <lv_i>.
+*      WRITE: / 'h count', sy-tabix, <lv_i>.
+*    ENDLOOP.
 
 ************
 
@@ -109,25 +106,30 @@ CLASS lcl_zlib_huffman IMPLEMENTATION.
       READ TABLE mt_count INDEX sy-index INTO lv_count.
       lv_prev = lv_prev + lv_count.
       APPEND lv_prev TO lt_offset.
-      WRITE: / 'offset', lv_prev.
+*      WRITE: / 'offset', lv_prev.
     ENDDO.
 
-* todo
+    DO lines( it_lengths ) TIMES.
+      APPEND 0 TO mt_symbol.
+    ENDDO.
+    DO lines( it_lengths ) TIMES.
+      lv_index = sy-index.
+      READ TABLE it_lengths INDEX lv_index INTO lv_length.
+      ASSERT sy-subrc = 0.
+      IF lv_length = 0.
+        CONTINUE.
+      ENDIF.
+      READ TABLE lt_offset INDEX lv_length ASSIGNING <lv_offset>.
+      ASSERT sy-subrc = 0.
+      READ TABLE mt_symbol INDEX <lv_offset> + 1 ASSIGNING <lv_symbol>.
+      ASSERT sy-subrc = 0.
+      <lv_symbol> = lv_index - 1.
+      <lv_offset> = <lv_offset> + 1.
+    ENDDO.
 
-*    LOOP AT it_lengths INTO lv_value.
-*      lv_index = sy-tabix.
-*      APPEND INITIAL LINE TO lt_offset ASSIGNING <ls_offset>.
-*      <ls_offset>-value = lv_value.
-*      <ls_offset>-index = sy-tabix - 1.
+*    LOOP AT mt_symbol ASSIGNING <lv_i>.
+*      WRITE: / 'h symbol', sy-tabix, <lv_i>.
 *    ENDLOOP.
-*    SORT lt_offset BY value ASCENDING index ASCENDING.
-*    LOOP AT lt_offset ASSIGNING <ls_offset>.
-*      APPEND <ls_offset>-index TO mt_symbol.
-*    ENDLOOP.
-
-    LOOP AT mt_symbol ASSIGNING <lv_i>.
-      WRITE: / 'h symbol', sy-tabix, <lv_i>.
-    ENDLOOP.
 
   ENDMETHOD.                    "constructor
 
@@ -223,11 +225,11 @@ CLASS lcl_zlib IMPLEMENTATION.
       lv_bit = take_bits( 1 ).
       CONCATENATE lv_bits lv_bit INTO lv_bits.
       lv_code = bits_to_int( lv_bits ).
-      lv_count = io_huffman->count( lv_len ).
+      lv_count = io_huffman->get_count( lv_len ).
 
 *      WRITE: / 'code', lv_code, 'count', lv_count, 'first', lv_first, 'len', lv_len.
       IF lv_code - lv_count < lv_first.
-        rv_symbol = io_huffman->symbol( lv_index + lv_code - lv_first + 1 ).
+        rv_symbol = io_huffman->get_symbol( lv_index + lv_code - lv_first + 1 ).
         RETURN.
       ENDIF.
       lv_index = lv_index + lv_count.
@@ -323,13 +325,16 @@ CLASS lcl_zlib IMPLEMENTATION.
 
   METHOD dynamic.
 
-    DATA: lv_nlen TYPE i,
-          lv_ndist TYPE i,
-          lv_ncode TYPE i,
-          lv_index TYPE i,
-          lv_foo TYPE i,
-          lt_order TYPE TABLE OF i,
-          lt_lengths TYPE lcl_zlib_huffman=>ty_lengths.
+    DATA: lv_nlen    TYPE i,
+          lv_ndist   TYPE i,
+          lv_ncode   TYPE i,
+          lv_index   TYPE i,
+*          lv_foo     TYPE i,
+          lv_length  TYPE i,
+          lv_symbol  TYPE i,
+          lt_order   TYPE TABLE OF i,
+          lt_lengths TYPE lcl_zlib_huffman=>ty_lengths,
+          lt_dists   TYPE lcl_zlib_huffman=>ty_lengths.
 
     FIELD-SYMBOLS: <lv_length> LIKE LINE OF lt_lengths.
 
@@ -369,18 +374,53 @@ CLASS lcl_zlib IMPLEMENTATION.
       ASSERT sy-subrc = 0.
       <lv_length> = bits_to_int( take_bits( 3 ) ).
     ENDDO.
-    WRITE: / 'dynamic'.
+
     CREATE OBJECT go_lencode
       EXPORTING
         it_lengths = lt_lengths.
+
+    CLEAR lt_lengths.
+    WHILE lines( lt_lengths ) < lv_nlen + lv_ndist.
+      lv_symbol = decode( go_lencode ).
+*      WRITE: / 'dynamic symbol:', lv_symbol.
+      IF lv_symbol < 16.
+        APPEND lv_symbol TO lt_lengths.
+      ELSE.
+        lv_length = 0.
+        IF lv_symbol = 16.
+          READ TABLE lt_lengths INDEX lines( lt_lengths ) - 1 INTO lv_length.
+          lv_symbol = bits_to_int( take_bits( 2 ) ) + 3.
+        ELSEIF lv_symbol = 17.
+          lv_symbol = bits_to_int( take_bits( 3 ) ) + 3.
+        ELSE.
+          lv_symbol = bits_to_int( take_bits( 7 ) ) + 11.
+        ENDIF.
+*        WRITE: / 'ssymbol', lv_symbol.
+        DO lv_symbol TIMES.
+          APPEND lv_length TO lt_lengths.
+        ENDDO.
+      ENDIF.
+    ENDWHILE.
+
+    lt_dists = lt_lengths.
+    DELETE lt_lengths FROM lv_nlen + 1.
+    DELETE lt_dists TO lv_nlen.
+
+    CREATE OBJECT go_lencode
+      EXPORTING
+        it_lengths = lt_lengths.
+
+    CREATE OBJECT go_distcode
+      EXPORTING
+        it_lengths = lt_dists.
 
   ENDMETHOD.                    "dynamic
 
   METHOD take_bits.
 
-    DATA: lv_left TYPE i,
+    DATA: lv_left  TYPE i,
           lv_index TYPE i,
-          lv_x TYPE x LENGTH 1.
+          lv_x     TYPE x LENGTH 1.
 
 
     WHILE strlen( rv_bits ) < iv_count.
@@ -626,6 +666,7 @@ CLASS lcl_zlib IMPLEMENTATION.
 
     DATA: lv_x      TYPE x LENGTH 1,
           lv_symbol TYPE i,
+          lv_output TYPE abap_bool,
           lv_bfinal TYPE c LENGTH 1,
           lv_btype  TYPE c LENGTH 2.
 
@@ -643,17 +684,24 @@ CLASS lcl_zlib IMPLEMENTATION.
       lv_btype = take_bits( 2 ).
       CASE lv_btype.
         WHEN '01'.
+*          WRITE: / 'fixed'.
           fixed( ).
         WHEN '10'.
+          WRITE: / 'dynamic'.
+          lv_output = abap_true.
           dynamic( ).
-          RETURN. " todo
+*          RETURN. " todo
         WHEN OTHERS.
           BREAK-POINT.
       ENDCASE.
 
       DO.
         lv_symbol = decode( go_lencode ).
-*        WRITE: / 'symbol =', lv_symbol.
+        IF lv_output = abap_true.
+          DATA: lv_len TYPE i.
+          lv_len = xstrlen( gv_out ).
+          WRITE: / lv_len, 'symbol =', lv_symbol.
+        ENDIF.
 
         IF lv_symbol < 256.
           lv_x = int_to_hex( lv_symbol ).
