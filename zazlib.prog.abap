@@ -23,12 +23,6 @@ REPORT zazlib.
 * SOFTWARE.
 ********************************************************************************
 
-* todo, refactor to classes: bitstream, conversion?
-
-CONSTANTS: c_maxbits TYPE i VALUE 15.
-
-DATA: gv_output TYPE abap_bool.
-
 *----------------------------------------------------------------------*
 *       CLASS lcl_zlib_huffman DEFINITION
 *----------------------------------------------------------------------*
@@ -38,6 +32,8 @@ CLASS lcl_zlib_huffman DEFINITION FINAL.
 
   PUBLIC SECTION.
     TYPES: ty_lengths TYPE STANDARD TABLE OF i WITH DEFAULT KEY.
+
+    CONSTANTS: c_maxbits TYPE i VALUE 15.
 
     METHODS:
       constructor
@@ -78,7 +74,6 @@ CLASS lcl_zlib_huffman IMPLEMENTATION.
           lv_length LIKE LINE OF it_lengths,
           lv_prev   TYPE i,
           lv_count  LIKE LINE OF mt_count.
-*          lv_value  TYPE i.
 
     FIELD-SYMBOLS: <lv_offset> LIKE LINE OF lt_offset,
                    <lv_symbol> LIKE LINE OF mt_symbol,
@@ -97,18 +92,14 @@ CLASS lcl_zlib_huffman IMPLEMENTATION.
       <lv_i> = <lv_i> + 1.
     ENDLOOP.
 
-*    LOOP AT mt_count ASSIGNING <lv_i>.
-*      WRITE: / 'h count', sy-tabix, <lv_i>.
-*    ENDLOOP.
-
 ************
 
     APPEND 0 TO lt_offset.
     DO c_maxbits - 1 TIMES.
       READ TABLE mt_count INDEX sy-index INTO lv_count.
+      ASSERT sy-subrc = 0.
       lv_prev = lv_prev + lv_count.
       APPEND lv_prev TO lt_offset.
-*      WRITE: / 'offset', lv_prev.
     ENDDO.
 
     DO lines( it_lengths ) TIMES.
@@ -129,13 +120,166 @@ CLASS lcl_zlib_huffman IMPLEMENTATION.
       <lv_offset> = <lv_offset> + 1.
     ENDDO.
 
-*    LOOP AT mt_symbol ASSIGNING <lv_i>.
-*      WRITE: / 'h symbol', sy-tabix, <lv_i>.
-*    ENDLOOP.
-
   ENDMETHOD.                    "constructor
 
 ENDCLASS.                    "lcl_zlib_huffman DEFINITION
+
+*----------------------------------------------------------------------*
+*       CLASS lcl_zlib_convert DEFINITION
+*----------------------------------------------------------------------*
+*
+*----------------------------------------------------------------------*
+CLASS lcl_zlib_convert DEFINITION FINAL.
+
+  PUBLIC SECTION.
+    CLASS-METHODS:
+      hex_to_bits
+        IMPORTING iv_hex         TYPE xsequence
+        RETURNING value(rv_bits) TYPE string,
+      bits_to_int
+        IMPORTING iv_bits       TYPE clike
+        RETURNING value(rv_int) TYPE i,
+      int_to_hex
+        IMPORTING iv_int        TYPE i
+        RETURNING value(rv_hex) TYPE xstring.
+
+ENDCLASS.                    "lcl_zlib_convert DEFINITION
+
+*----------------------------------------------------------------------*
+*       CLASS lcl_zlib_convert IMPLEMENTATION
+*----------------------------------------------------------------------*
+*
+*----------------------------------------------------------------------*
+CLASS lcl_zlib_convert IMPLEMENTATION.
+
+  METHOD hex_to_bits.
+
+    DATA: lv_x   TYPE x LENGTH 1,
+          lv_c   TYPE c LENGTH 1,
+          lv_bit TYPE i,
+          lv_hex TYPE xstring.
+
+
+    lv_hex = iv_hex.
+    WHILE NOT lv_hex IS INITIAL.
+      lv_x = lv_hex.
+      DO 8 TIMES.
+        lv_bit = sy-index.
+        GET BIT lv_bit OF lv_x INTO lv_c.
+        CONCATENATE rv_bits lv_c INTO rv_bits.
+      ENDDO.
+      lv_hex = lv_hex+1.
+    ENDWHILE.
+
+  ENDMETHOD.                    "hex_to_bits
+
+  METHOD bits_to_int.
+
+    DATA: lv_c    TYPE c LENGTH 1,
+          lv_bits TYPE string.
+
+    lv_bits = iv_bits.
+
+    WHILE NOT lv_bits IS INITIAL.
+      lv_c = lv_bits.
+      rv_int = rv_int * 2.
+      rv_int = rv_int + lv_c.
+      lv_bits = lv_bits+1.
+    ENDWHILE.
+
+  ENDMETHOD.                    "bits_to_int
+
+  METHOD int_to_hex.
+
+    DATA: lv_x TYPE x.
+
+
+    lv_x = iv_int.
+    rv_hex = lv_x.
+
+  ENDMETHOD.                    "int_to_hex
+
+ENDCLASS.                    "lcl_zlib_convert IMPLEMENTATION
+
+*----------------------------------------------------------------------*
+*       CLASS lcl_zlib_stream DEFINITION
+*----------------------------------------------------------------------*
+*
+*----------------------------------------------------------------------*
+CLASS lcl_zlib_stream DEFINITION FINAL.
+
+  PUBLIC SECTION.
+    METHODS:
+      constructor
+        IMPORTING iv_data TYPE xstring,
+      take_bits
+        IMPORTING iv_length      TYPE i
+        RETURNING value(rv_bits) TYPE string,
+      take_int
+        IMPORTING iv_length      TYPE i
+        RETURNING value(rv_int)  TYPE i,
+      remaining
+        RETURNING value(rv_length) TYPE i.
+
+  PRIVATE SECTION.
+    DATA: mv_compressed TYPE xstring,
+          mv_bits       TYPE string.
+
+ENDCLASS.                    "lcl_zlib_stream DEFINITION
+
+*----------------------------------------------------------------------*
+*       CLASS lcl_zlib_stream IMPLEMENTATION
+*----------------------------------------------------------------------*
+*
+*----------------------------------------------------------------------*
+CLASS lcl_zlib_stream IMPLEMENTATION.
+
+  METHOD constructor.
+
+    mv_compressed = iv_data.
+
+  ENDMETHOD.                    "constructor
+
+  METHOD remaining.
+
+    rv_length = xstrlen( mv_compressed ) - 1.
+
+  ENDMETHOD.                    "remaining
+
+  METHOD take_int.
+
+    rv_int = lcl_zlib_convert=>bits_to_int( take_bits( iv_length ) ).
+
+  ENDMETHOD.                    "take_int
+
+  METHOD take_bits.
+
+    DATA: lv_left  TYPE i,
+          lv_index TYPE i,
+          lv_x     TYPE x LENGTH 1.
+
+
+    WHILE strlen( rv_bits ) < iv_length.
+      IF mv_bits IS INITIAL.
+        lv_x = mv_compressed(1).
+        mv_bits = lcl_zlib_convert=>hex_to_bits( lv_x ).
+        mv_compressed = mv_compressed+1.
+      ENDIF.
+      lv_left = iv_length - strlen( rv_bits ).
+      IF lv_left >= strlen( mv_bits ).
+        CONCATENATE mv_bits rv_bits INTO rv_bits.
+        CLEAR mv_bits.
+      ELSE.
+        lv_index = strlen( mv_bits ) - lv_left.
+        CONCATENATE mv_bits+lv_index(lv_left) rv_bits INTO rv_bits.
+        mv_bits = mv_bits(lv_index).
+      ENDIF.
+
+    ENDWHILE.
+
+  ENDMETHOD.                    "take_bits
+
+ENDCLASS.                    "lcl_zlib_stream IMPLEMENTATION
 
 *----------------------------------------------------------------------*
 *       CLASS lcl_zlib DEFINITION
@@ -145,20 +289,23 @@ ENDCLASS.                    "lcl_zlib_huffman DEFINITION
 CLASS lcl_zlib DEFINITION FINAL.
 
   PUBLIC SECTION.
+    TYPES: BEGIN OF ty_decompress,
+             raw TYPE xstring,
+             compressed_len TYPE i,
+           END OF ty_decompress.
+
     CLASS-METHODS:
       decompress
         IMPORTING iv_compressed TYPE xsequence
-        RETURNING value(rv_raw) TYPE xstring.
+        RETURNING value(rs_data) TYPE ty_decompress.
 
   PRIVATE SECTION.
-    CONSTANTS: c_fixlcodes TYPE i VALUE 288,
-               c_maxdcodes TYPE i VALUE 30.
+    CONSTANTS: c_maxdcodes TYPE i VALUE 30.
 
-    CLASS-DATA: gv_compressed TYPE xstring,
-                gv_out        TYPE xstring,
+    CLASS-DATA: gv_out        TYPE xstring,
                 go_lencode    TYPE REF TO lcl_zlib_huffman,
                 go_distcode   TYPE REF TO lcl_zlib_huffman,
-                gv_bits       TYPE string.
+                go_stream     TYPE REF TO lcl_zlib_stream.
 
     TYPES: BEGIN OF ty_pair,
              length TYPE i,
@@ -177,29 +324,11 @@ CLASS lcl_zlib DEFINITION FINAL.
         RETURNING value(rv_distance) TYPE i,
       dynamic,
       fixed,
-      take_bits
-        IMPORTING iv_count       TYPE i
-        RETURNING value(rv_bits) TYPE string,
-      reverse_bits
-        IMPORTING iv_count       TYPE i
-        RETURNING value(rv_bits) TYPE string,
-      hex_to_bits
-        IMPORTING iv_hex         TYPE xsequence
-        RETURNING value(rv_bits) TYPE string,
-      bits_to_int
-        IMPORTING iv_bits       TYPE clike
-        RETURNING value(rv_int) TYPE i,
       read_pair
         IMPORTING iv_length TYPE i
         RETURNING value(rs_pair) TYPE ty_pair,
       copy_out
-        IMPORTING is_pair TYPE ty_pair,
-      int_to_hex
-        IMPORTING iv_int        TYPE i
-        RETURNING value(rv_hex) TYPE xstring,
-      reverse
-        IMPORTING iv_string TYPE string
-        RETURNING value(rv_string) TYPE string.
+        IMPORTING is_pair TYPE ty_pair.
 
 ENDCLASS.                    "lcl_zlib DEFINITION
 
@@ -221,23 +350,15 @@ CLASS lcl_zlib IMPLEMENTATION.
           lv_bits  TYPE string.
 
 
-    DO c_maxbits TIMES.
+    DO lcl_zlib_huffman=>c_maxbits TIMES.
       lv_len = sy-index.
 
-      lv_bit = take_bits( 1 ).
+      lv_bit = go_stream->take_bits( 1 ).
       CONCATENATE lv_bits lv_bit INTO lv_bits.
-      lv_code = bits_to_int( lv_bits ).
+      lv_code = lcl_zlib_convert=>bits_to_int( lv_bits ).
       lv_count = io_huffman->get_count( lv_len ).
 
-*      IF gv_output = abap_true.
-*        WRITE: / 'code', lv_code, 'count', lv_count, 'first', lv_first, 'len', lv_len, 'bit', lv_bit, 'index', lv_index.
-*      ENDIF.
       IF lv_code - lv_count < lv_first.
-*        DATA: lv_foo TYPE i.
-*        lv_foo = lv_index + lv_code - lv_first + 1.
-*        IF gv_output = abap_true.
-*          BREAK-POINT.
-*        ENDIF.
         rv_symbol = io_huffman->get_symbol( lv_index + lv_code - lv_first + 1 ).
         RETURN.
       ENDIF.
@@ -247,18 +368,6 @@ CLASS lcl_zlib IMPLEMENTATION.
     ENDDO.
 
   ENDMETHOD.                    "decode
-
-  METHOD reverse_bits.
-
-    DATA: lv_bit TYPE c LENGTH 1.
-
-
-    DO iv_count TIMES.
-      lv_bit = take_bits( 1 ).
-      CONCATENATE rv_bits lv_bit INTO rv_bits.
-    ENDDO.
-
-  ENDMETHOD.                    "reverse_bits
 
   METHOD fixed.
 
@@ -282,7 +391,6 @@ CLASS lcl_zlib IMPLEMENTATION.
       EXPORTING
         it_lengths = lt_lengths.
 
-
     CLEAR lt_lengths.
     DO c_maxdcodes TIMES.
       APPEND 5 TO lt_lengths.
@@ -293,24 +401,6 @@ CLASS lcl_zlib IMPLEMENTATION.
         it_lengths = lt_lengths.
 
   ENDMETHOD.                    "fixed
-
-  METHOD reverse.
-
-    DATA: lv_len    TYPE i,
-          lv_char   TYPE c LENGTH 1,
-          lv_string TYPE string.
-
-
-    lv_string = iv_string.
-
-    WHILE lv_string <> ''.
-      lv_len = strlen( lv_string ) - 1.
-      lv_char = lv_string+lv_len(1).
-      CONCATENATE rv_string lv_char INTO rv_string.
-      lv_string = lv_string(lv_len).
-    ENDWHILE.
-
-  ENDMETHOD.                    "reverse
 
   METHOD copy_out.
 
@@ -326,10 +416,6 @@ CLASS lcl_zlib IMPLEMENTATION.
     lv_distance = xstrlen( gv_out ) - is_pair-distance.
     DO is_pair-length TIMES.
       lv_index = sy-index - 1 + lv_distance.
-      IF lv_index > xstrlen( gv_out ) OR lv_index < 0.
-        BREAK-POINT.
-        RETURN.
-      ENDIF.
       lv_x = gv_out+lv_index(1).
       CONCATENATE gv_out lv_x INTO gv_out IN BYTE MODE.
     ENDDO.
@@ -342,7 +428,6 @@ CLASS lcl_zlib IMPLEMENTATION.
           lv_ndist   TYPE i,
           lv_ncode   TYPE i,
           lv_index   TYPE i,
-*          lv_foo     TYPE i,
           lv_length  TYPE i,
           lv_symbol  TYPE i,
           lt_order   TYPE TABLE OF i,
@@ -372,9 +457,9 @@ CLASS lcl_zlib IMPLEMENTATION.
     APPEND  1 TO lt_order.
     APPEND 15 TO lt_order.
 
-    lv_nlen = bits_to_int( take_bits( 5 ) ) + 257.
-    lv_ndist = bits_to_int( take_bits( 5 ) ) + 1.
-    lv_ncode = bits_to_int( take_bits( 4 ) ) + 4.
+    lv_nlen = go_stream->take_int( 5 ) + 257.
+    lv_ndist = go_stream->take_int( 5 ) + 1.
+    lv_ncode = go_stream->take_int( 4 ) + 4.
 
     DO 19 TIMES.
       APPEND 0 TO lt_lengths.
@@ -382,10 +467,11 @@ CLASS lcl_zlib IMPLEMENTATION.
 
     DO lv_ncode TIMES.
       READ TABLE lt_order INDEX sy-index INTO lv_index.
+      ASSERT sy-subrc = 0.
       lv_index = lv_index + 1.
       READ TABLE lt_lengths INDEX lv_index ASSIGNING <lv_length>.
       ASSERT sy-subrc = 0.
-      <lv_length> = bits_to_int( take_bits( 3 ) ).
+      <lv_length> = go_stream->take_int( 3 ).
     ENDDO.
 
     CREATE OBJECT go_lencode
@@ -395,22 +481,20 @@ CLASS lcl_zlib IMPLEMENTATION.
     CLEAR lt_lengths.
     WHILE lines( lt_lengths ) < lv_nlen + lv_ndist.
       lv_symbol = decode( go_lencode ).
-*      DATA: lv_indexx TYPE i.
-*      lv_indexx = lines( lt_lengths ).
-*      WRITE: / 'dynamic symbol:', lv_symbol, 'index', lv_indexx.
+
       IF lv_symbol < 16.
         APPEND lv_symbol TO lt_lengths.
       ELSE.
         lv_length = 0.
         IF lv_symbol = 16.
           READ TABLE lt_lengths INDEX lines( lt_lengths ) INTO lv_length.
-          lv_symbol = bits_to_int( take_bits( 2 ) ) + 3.
+          ASSERT sy-subrc = 0.
+          lv_symbol = go_stream->take_int( 2 ) + 3.
         ELSEIF lv_symbol = 17.
-          lv_symbol = bits_to_int( take_bits( 3 ) ) + 3.
+          lv_symbol = go_stream->take_int( 3 ) + 3.
         ELSE.
-          lv_symbol = bits_to_int( take_bits( 7 ) ) + 11.
+          lv_symbol = go_stream->take_int( 7 ) + 11.
         ENDIF.
-*        WRITE: / 'ssymbol', lv_symbol, 'length', lv_length.
         DO lv_symbol TIMES.
           APPEND lv_length TO lt_lengths.
         ENDDO.
@@ -421,11 +505,6 @@ CLASS lcl_zlib IMPLEMENTATION.
     DELETE lt_lengths FROM lv_nlen + 1.
     DELETE lt_dists TO lv_nlen.
 
-*    DATA: lv_foo TYPE i.
-*    LOOP AT lt_dists INTO lv_foo.
-*      WRITE: / 'dist', sy-tabix, lv_foo.
-*    ENDLOOP.
-
     CREATE OBJECT go_lencode
       EXPORTING
         it_lengths = lt_lengths.
@@ -433,121 +512,25 @@ CLASS lcl_zlib IMPLEMENTATION.
     CREATE OBJECT go_distcode
       EXPORTING
         it_lengths = lt_dists.
-*    DO lv_ndist TIMES.
-*      DATA: lv_foo TYPE i.
-*      lv_foo = go_distcode->get_symbol( sy-index ).
-*      WRITE: / 'dist symbols:', sy-index, lv_foo.
-*    ENDDO.
+
   ENDMETHOD.                    "dynamic
-
-  METHOD take_bits.
-
-    DATA: lv_left  TYPE i,
-          lv_index TYPE i,
-          lv_x     TYPE x LENGTH 1.
-
-
-    WHILE strlen( rv_bits ) < iv_count.
-      IF gv_bits IS INITIAL.
-        lv_x = gv_compressed(1).
-        gv_bits = hex_to_bits( lv_x ).
-        gv_compressed = gv_compressed+1.
-      ENDIF.
-      lv_left = iv_count - strlen( rv_bits ).
-      IF lv_left >= strlen( gv_bits ).
-        CONCATENATE gv_bits rv_bits INTO rv_bits.
-        CLEAR gv_bits.
-      ELSE.
-        lv_index = strlen( gv_bits ) - lv_left.
-        CONCATENATE gv_bits+lv_index(lv_left) rv_bits INTO rv_bits.
-        gv_bits = gv_bits(lv_index).
-      ENDIF.
-
-    ENDWHILE.
-
-  ENDMETHOD.                    "take_bits
-
-  METHOD int_to_hex.
-
-    DATA: lv_x TYPE x.
-
-
-    lv_x = iv_int.
-    rv_hex = lv_x.
-
-  ENDMETHOD.                    "int_to_hex
-
-  METHOD bits_to_int.
-
-    DATA: lv_c    TYPE c LENGTH 1,
-          lv_bits TYPE string.
-
-    lv_bits = iv_bits.
-
-    WHILE NOT lv_bits IS INITIAL.
-      lv_c = lv_bits.
-      rv_int = rv_int * 2.
-      rv_int = rv_int + lv_c.
-      lv_bits = lv_bits+1.
-    ENDWHILE.
-
-  ENDMETHOD.                    "bits_to_int
-
-  METHOD hex_to_bits.
-
-    DATA: lv_x   TYPE x LENGTH 1,
-          lv_c   TYPE c LENGTH 1,
-          lv_bit TYPE i,
-          lv_hex TYPE xstring.
-
-
-    lv_hex = iv_hex.
-    WHILE NOT lv_hex IS INITIAL.
-      lv_x = lv_hex.
-      DO 8 TIMES.
-        lv_bit = sy-index.
-        GET BIT lv_bit OF lv_x INTO lv_c.
-        CONCATENATE rv_bits lv_c INTO rv_bits.
-      ENDDO.
-      lv_hex = lv_hex+1.
-    ENDWHILE.
-
-  ENDMETHOD.                    "hex_to_bits
 
   METHOD read_pair.
 
-    DATA: lv_tmp TYPE string,
-          lv_symbol TYPE i,
-          lv_int TYPE i.
+    DATA: lv_symbol TYPE i.
 
-*    IF gv_output = abap_true.
-*      BREAK-POINT.
-*    ENDIF.
+
     rs_pair-length = map_length( iv_length ).
-*    IF gv_output = abap_true.
-*      WRITE: / 'len =', rs_pair-length, 'start dist decode'.
-*    ENDIF.
 
     lv_symbol = decode( go_distcode ).
-*    IF gv_output = abap_true.
-*      WRITE: / 'dist symbol =', lv_symbol.
-*    ENDIF.
-*    lv_tmp = reverse_bits( 5 ).
-*    lv_int = bits_to_int( lv_tmp ).
     rs_pair-distance = map_distance( lv_symbol ).
-*    IF gv_output = abap_true.
-*      WRITE: / 'dist =', rs_pair-distance.
-*    ENDIF.
 
   ENDMETHOD.                    "read_pair
 
   METHOD map_distance.
 
-    DATA: lv_tmp TYPE string.
-
     DEFINE _distance.
-      lv_tmp = take_bits( &1 ).
-      rv_distance = bits_to_int( lv_tmp ).
+      rv_distance = go_stream->take_int( &1 ).
       rv_distance = rv_distance + &2.
     END-OF-DEFINITION.
 
@@ -613,19 +596,15 @@ CLASS lcl_zlib IMPLEMENTATION.
       WHEN 29.
         _distance 13 24577.
       WHEN OTHERS.
-        BREAK-POINT.
+        ASSERT 1 = 0.
     ENDCASE.
 
   ENDMETHOD.                    "map_distance
 
   METHOD map_length.
 
-    DATA: lv_tmp TYPE string.
-
-
     DEFINE _length.
-      lv_tmp = take_bits( &1 ).
-      rv_length = bits_to_int( lv_tmp ).
+      rv_length = go_stream->take_int( &1 ).
       rv_length = rv_length + &2.
     END-OF-DEFINITION.
 
@@ -689,7 +668,7 @@ CLASS lcl_zlib IMPLEMENTATION.
       WHEN 285.
         _length 0 258.
       WHEN OTHERS.
-        BREAK-POINT.
+        ASSERT 1 = 0.
     ENDCASE.
 
   ENDMETHOD.                    "map_length
@@ -707,37 +686,28 @@ CLASS lcl_zlib IMPLEMENTATION.
     ENDIF.
 
     CLEAR gv_out.
-    gv_compressed = iv_compressed.
+    CREATE OBJECT go_stream
+      EXPORTING
+        iv_data = iv_compressed.
 
     DO.
-      lv_bfinal = take_bits( 1 ).
+      lv_bfinal = go_stream->take_bits( 1 ).
 
-      lv_btype = take_bits( 2 ).
+      lv_btype = go_stream->take_bits( 2 ).
       CASE lv_btype.
         WHEN '01'.
-*          WRITE: / 'fixed'.
           fixed( ).
         WHEN '10'.
-          WRITE: / 'dynamic'.
           dynamic( ).
-*          RETURN. " todo
         WHEN OTHERS.
-          BREAK-POINT.
+          ASSERT 1 = 0.
       ENDCASE.
 
       DO.
         lv_symbol = decode( go_lencode ).
-        IF xstrlen( gv_out ) >= 462.
-          gv_output = abap_true.
-        ENDIF.
-        IF gv_output = abap_true.
-          DATA: lv_len TYPE i.
-          lv_len = xstrlen( gv_out ).
-          WRITE: / lv_len, 'symbol =', lv_symbol.
-        ENDIF.
 
         IF lv_symbol < 256.
-          lv_x = int_to_hex( lv_symbol ).
+          lv_x = lcl_zlib_convert=>int_to_hex( lv_symbol ).
           CONCATENATE gv_out lv_x INTO gv_out IN BYTE MODE.
         ELSEIF lv_symbol = 256.
           EXIT.
@@ -753,7 +723,8 @@ CLASS lcl_zlib IMPLEMENTATION.
 
     ENDDO.
 
-    rv_raw = gv_out.
+    rs_data-raw = gv_out.
+    rs_data-compressed_len = xstrlen( iv_compressed ) - go_stream->remaining( ).
 
   ENDMETHOD.                    "decompress
 
@@ -781,18 +752,18 @@ CLASS ltcl_zlib IMPLEMENTATION.
 
   METHOD decompress.
 
-    DATA: lv_raw TYPE xstring.
+    DATA: ls_data TYPE lcl_zlib=>ty_decompress.
 
     CONSTANTS:
-      c_raw        TYPE xstring VALUE '48656C6C6F20576F726C64210D0A',
-      c_compressed TYPE xstring VALUE 'F348CDC9C95708CF2FCA4951E4E5020024E90455'.
+      lc_raw        TYPE xstring VALUE '48656C6C6F20576F726C64210D0A',
+      lc_compressed TYPE xstring VALUE 'F348CDC9C95708CF2FCA4951E4E5020024E90455'.
 
 
-    lv_raw = lcl_zlib=>decompress( c_compressed ).
+    ls_data = lcl_zlib=>decompress( lc_compressed ).
 
-    cl_abap_unit_assert=>assert_not_initial( lv_raw ).
-    cl_abap_unit_assert=>assert_equals( act = lv_raw
-                                        exp = c_raw ).
+    cl_abap_unit_assert=>assert_not_initial( ls_data-raw ).
+    cl_abap_unit_assert=>assert_equals( act = ls_data-raw
+                                        exp = lc_raw ).
 
   ENDMETHOD.                    "decompress
 
@@ -808,6 +779,10 @@ CLASS lcl_app DEFINITION FINAL.
   PUBLIC SECTION.
     CLASS-METHODS: run.
 
+    CLASS-METHODS xstring_to_string_utf8
+      IMPORTING iv_data          TYPE xstring
+      RETURNING value(rv_string) TYPE string.
+
 ENDCLASS.                    "lcl_app DEFINITION
 
 *----------------------------------------------------------------------*
@@ -817,106 +792,41 @@ ENDCLASS.                    "lcl_app DEFINITION
 *----------------------------------------------------------------------*
 CLASS lcl_app IMPLEMENTATION.
 
+  METHOD xstring_to_string_utf8.
+
+    DATA: lv_len TYPE i,
+          lo_obj TYPE REF TO cl_abap_conv_in_ce.
+
+
+    TRY.
+        lo_obj = cl_abap_conv_in_ce=>create(
+            input    = iv_data
+            encoding = 'UTF-8' ).
+        lv_len = xstrlen( iv_data ).
+
+        lo_obj->read( EXPORTING n    = lv_len
+                      IMPORTING data = rv_string ).
+
+      CATCH cx_parameter_invalid_range
+            cx_sy_codepage_converter_init
+            cx_sy_conversion_codepage
+            cx_parameter_invalid_type.                  "#EC NO_HANDLER
+    ENDTRY.
+
+  ENDMETHOD.                    "xstring_to_string_utf8
+
   METHOD run.
 
-    CONSTANTS:
-*     c_compressed TYPE xstring VALUE 'D5586D6FDB3610FE9E5F71D83034CDE6BC10'.
-      c_compressed TYPE xstring VALUE '0B492D2EC9CC4B0F815000'.
-
     DATA: lv_compressed TYPE xstring,
-          lv_hex TYPE xstring,
-          lv_raw TYPE xstring.
+          lv_decoded    TYPE string,
+          lv_hex        TYPE xstring,
+          ls_data       TYPE lcl_zlib=>ty_decompress.
 
 
     DEFINE _hex.
       lv_hex = &1.
       concatenate lv_compressed lv_hex into lv_compressed in byte mode.
     END-OF-DEFINITION.
-
-*    _hex '62601805A360148C8251300A46C1281805A360148C8251300A46C1281805'.
-*    _hex 'A360148C8251300A46C1281805A360148C8251300A46C1281805A360148C'.
-*    _hex '825130A400802038100000000000E2BF1A00000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '0000B20707240000000082FEBF6E47A00200000000000000003013000900'.
-*    _hex 'F6FF000000000000000000EDDC810000000080207FEB05462890EC5F0000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '000000000000000000000000000000000000000000000000000000000000'.
-*    _hex '00000000000000000000000000000000000000000000000000C008'.
 
     _hex '75555D6FE246147DF7AFB8521F1610A0AA8F911A'.
     _hex 'C9C1A6B5969034711A352FCE605FF074CD8C3B33'.
@@ -985,54 +895,10 @@ CLASS lcl_app IMPLEMENTATION.
     _hex '3D67FD7037EF90F50B1D34DE4F14A873EDFCF9DF'.
     _hex '242EB0E3340E2869674CEBF164B3E22FDB44EAD0'.
 
-*    TYPES: ty_hex20 TYPE x LENGTH 20.
-*    DATA: lv_tmp LIKE lv_compressed,
-*          lt_data TYPE TABLE OF ty_hex20.
-*    lv_tmp = lv_compressed.
-*    WHILE xstrlen( lv_tmp ) > 0.
-*      APPEND lv_tmp(20) TO lt_data.
-*      lv_tmp = lv_tmp+20.
-*    ENDWHILE.
-*
-*    cl_gui_frontend_services=>gui_download(
-*      EXPORTING
-*        bin_filesize              = xstrlen( lv_compressed )
-*        filename                  = 'foo.raw'
-*        filetype                  = 'BIN'
-*      CHANGING
-*        data_tab                  = lt_data
-*      EXCEPTIONS
-*        file_write_error          = 1
-*        no_batch                  = 2
-*        gui_refuse_filetransfer   = 3
-*        invalid_type              = 4
-*        no_authority              = 5
-*        unknown_error             = 6
-*        header_not_allowed        = 7
-*        separator_not_allowed     = 8
-*        filesize_not_allowed      = 9
-*        header_too_long           = 10
-*        dp_error_create           = 11
-*        dp_error_send             = 12
-*        dp_error_write            = 13
-*        unknown_dp_error          = 14
-*        access_denied             = 15
-*        dp_out_of_memory          = 16
-*        disk_full                 = 17
-*        dp_timeout                = 18
-*        file_not_found            = 19
-*        dataprovider_exception    = 20
-*        control_flush_error       = 21
-*        not_supported_by_gui      = 22
-*        error_no_gui              = 23
-*        OTHERS                    = 24
-*           ).
-*    IF sy-subrc <> 0.
-*      BREAK-POINT.
-*    ENDIF.
+    ls_data = lcl_zlib=>decompress( lv_compressed ).
 
-    lv_raw = lcl_zlib=>decompress( lv_compressed ).
-*    WRITE: / 'decompressed:', lv_raw.
+    lv_decoded = xstring_to_string_utf8( ls_data-raw ).
+    WRITE: / lv_decoded.
 
   ENDMETHOD.                    "run
 
