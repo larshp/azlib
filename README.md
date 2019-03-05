@@ -1,4 +1,4 @@
-[![abaplint](http://abaplint.org/badges/larshp/zazlib)](http://abaplint.org/project/larshp/zazlib)
+[![abaplint](https://abaplint.org/badges/larshp/zazlib)](http://abaplint.org/project/larshp/zazlib)
 
 # zazlib
 ABAP implementation of zlib
